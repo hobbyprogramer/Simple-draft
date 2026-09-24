@@ -569,7 +569,18 @@ function renderVBD() {
 /* ---------- Rendering ---------- */
 function render() {
   if (!DATA) return;
-  const all = scorePlayers(DATA);
+    let all = scorePlayers(DATA);
+  if (currentPos === "ALL") {
+    const gws = Math.max(1, DATA.gameweeksPlayed);
+    const adj = new Map((CONFIG.player_adjustments || []).map((x) => [norm(x.name) + "|" + norm(x.team), x]));
+    all.forEach((p) => {
+      const x = adj.get(norm(p.name) + "|" + norm(p.team));
+      p.proj = projectPlayer(p, gws, CONFIG.fixture_window) * (1 + (x ? Number(x.boost) || 0 : 0) / 100);
+    });
+    const max = Math.max(...all.map((p) => p.proj), 1);
+    all.forEach((p) => (p.score = Math.round(Math.max(0, Math.min(100, (100 * p.proj) / max)))));
+    all.sort((a, b) => b.proj - a.proj);
+  }
   const inLeague = DATA.league != null;
   let list = inLeague ? all.filter((p) => p.available) : all;
   if (currentPos !== "ALL") list = list.filter((p) => p.pos === currentPos);
