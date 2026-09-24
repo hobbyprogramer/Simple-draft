@@ -93,7 +93,7 @@ module.exports = async (req, res) => {
   try {
     const [oddsRes, bootRes] = await Promise.all([
       fetch(`https://api.the-odds-api.com/v4/sports/soccer_epl/odds/?regions=uk&markets=h2h,totals&oddsFormat=decimal&apiKey=${key}`),
-      fetch(`${FPL}/bootstrap-static/`, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SimpleDraft/1.0)' } }),
+      fetch(`${FPL}/bootstrap-static/`, { headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36', Accept: 'application/json' } }),
     ]);
     if (!oddsRes.ok) throw new Error('Odds API returned ' + oddsRes.status);
     const games = await oddsRes.json();

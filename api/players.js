@@ -3,17 +3,30 @@
 
 const DRAFT = 'https://draft.premierleague.com/api';
 const FPL = 'https://fantasy.premierleague.com/api';
-const HEADERS = { 'User-Agent': 'Mozilla/5.0 (compatible; SimpleDraft/1.0)' };
+const HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36',
+  Accept: 'application/json, text/plain, */*',
+  'Accept-Language': 'en-GB,en;q=0.9',
+};
 const POS = { 1: 'GK', 2: 'DEF', 3: 'MID', 4: 'FWD' };
 
-async function getJSON(url) {
-  const r = await fetch(url, { headers: HEADERS });
-  if (!r.ok) {
-    const e = new Error(`${url} returned ${r.status}`);
-    e.status = r.status;
-    throw e;
+async function getJSON(url, tries = 2) {
+  let last;
+  for (let i = 0; i < tries; i++) {
+    try {
+      const r = await fetch(url, { headers: HEADERS });
+      if (!r.ok) {
+        last = new Error(`${url} returned ${r.status}`);
+        last.status = r.status;
+      } else {
+        return await r.json();
+      }
+    } catch (e) {
+      last = new Error(`${url} failed: ${e.message}`);
+    }
+    await new Promise((res) => setTimeout(res, 400));
   }
-  return r.json();
+  throw last;
 }
 
 const norm = (s) =>
@@ -36,7 +49,7 @@ module.exports = async (req, res) => {
     console.error(e);
     return res
       .status(502)
-      .json({ error: 'The FPL servers are not responding right now (they are often busy during gameweek updates). Try again in a few minutes.' });
+      .json({ error: 'Could not get player data from FPL right now. Try again in a few minutes.', details: e.message });
   }
 
   // Which league players are owned?
