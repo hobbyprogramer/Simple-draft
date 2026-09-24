@@ -1,0 +1,22 @@
+{
+  "weekly_note": {
+    "title": "Gameweek notes",
+    "text": "Write your thoughts for this gameweek here. Who is worth a claim, who to drop, and why."
+  },
+
+  "weights": {
+    "xg_xa": 40,
+    "minutes": 25,
+    "fixtures": 20,
+    "form": 15
+  },
+
+  "fixture_window": 5,
+  "vbd_horizon": 6,
+  "free_limit": 5,
+  "paywall": false,
+
+  "player_adjustments": [
+    { "name": "Example Player", "team": "ARS", "boost": 10, "comment": "Took over penalties last week." }
+  ]
+}
