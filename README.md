@@ -31,3 +31,9 @@ Without a key the site still works and uses FPL's own fixture difficulty.
 - `vbd_horizon` in `config.json`: how many upcoming matches the projection covers (default 6).
 - Value = projected points minus the best player left at that position once every team
   has filled 1 GK, 4 DEF, 4 MID and 2 FWD. Change these numbers in `index.html` (vbd_starters) if needed.
+
+## Player data (updated automatically)
+GitHub fetches fresh FPL data every 3 hours (`.github/workflows/update-data.yml`)
+and saves it to `data/players.json`. The website reads that file, so it keeps working
+even when FPL is slow. To update right away: Actions → Update FPL data → Run workflow.
+Only the league lookup (who owns which player) asks FPL live, through `api/league.js`.

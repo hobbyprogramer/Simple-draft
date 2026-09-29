@@ -5,10 +5,10 @@
   },
 
   "weights": {
-    "xg_xa": 40,
-    "minutes": 25,
+    "xg_xa": 30,
+    "minutes": 20,
     "fixtures": 20,
-    "form": 15
+    "form": 30
   },
 
   "fixture_window": 5,

@@ -263,6 +263,7 @@ footer { padding: 32px 0 48px; color: var(--muted); font-size: 0.9rem; border-to
       <div>
         <h2>How the score works</h2>
         <p>Every player gets a score from 0 to 100, compared with others in the same position. Four things go into it, weighted like the bar shows.</p>
+        <p>The weights were chosen by testing the model on the last two full seasons, gameweek by gameweek. Its top picks among players outside the most-owned scored about six times as many points as random picks, and holding up in both seasons mattered more than looking perfect in one.</p>
         <p>Then I go through the list by hand every gameweek. Numbers miss things like new penalty takers, rotation and injury news, so players get nudged up or down, with a note on why.</p>
       </div>
       <div>
@@ -319,7 +320,7 @@ footer { padding: 32px 0 48px; color: var(--muted); font-size: 0.9rem; border-to
 /* ---------- Settings used if config.json can't be loaded ---------- */
 const DEFAULT_CONFIG = {
   weekly_note: { title: "Gameweek notes", text: "Weekly notes will appear here." },
-  weights: { xg_xa: 40, minutes: 25, fixtures: 20, form: 15 },
+  weights: { xg_xa: 30, minutes: 20, fixtures: 20, form: 30 },
   fixture_window: 5,
   vbd_horizon: 6,
   vbd_starters: { GK: 1, DEF: 4, MID: 4, FWD: 2 },
@@ -338,7 +339,7 @@ const FACTORS = [
   { key: "xg_xa", label: "xG and xA", desc: "Expected goals and assists per 90 minutes. Shows who gets the chances, not who got lucky. Goalkeepers are rated on saves per 90 and goals prevented instead.", color: "#1E573D" },
   { key: "minutes", label: "Minutes", desc: "Share of possible minutes played. Great numbers from the bench don't score points.", color: "#3E8A62" },
   { key: "fixtures", label: "Fixtures", desc: "Bookmaker odds for the next few matches: clean sheet chance for defenders, expected goals for attackers.", color: "#7FB08F" },
-  { key: "form", label: "Form", desc: "Points per game over the last month.", color: "#B8962A" }
+  { key: "form", label: "Form", desc: "Points per game over the last month. Testing showed form matters more for the next few weeks than we first assumed.", color: "#B8962A" }
 ];
 
 const $ = (id) => document.getElementById(id);
@@ -378,6 +379,7 @@ function demoData(league) {
       const saves = pos === "GK" ? Math.round(n90 * (1.5 + r() * 2.5)) : 0;
       const xgc = pos === "GK" ? +(n90 * (0.9 + r() * 0.8)).toFixed(2) : 0;
       players.push({
+        defcon90: pos === "GK" ? 0 : +(4 + r() * (pos === "DEF" ? 8 : 7)).toFixed(1),
         saves, xgc, goalsConceded: pos === "GK" ? Math.round(xgc * (0.7 + r() * 0.6)) : 0,
         id: id++, name: String.fromCharCode(65 + Math.floor(r() * 26)) + ". " + names[n++ % names.length], team, pos,
         minutes, xg, xa, form: +(r() * 8).toFixed(1), status,
@@ -402,26 +404,59 @@ async function loadConfig() {
   } catch (e) { /* use defaults */ }
 }
 
+async function getJSONOrNull(url) {
+  try {
+    const r = await fetch(url, { cache: "no-store" });
+    let j = null;
+    try { j = await r.json(); } catch (e) { return { ok: false, status: r.status, json: null }; }
+    return { ok: r.ok, status: r.status, json: j };
+  } catch (e) { return { ok: false, status: 0, json: null }; }
+}
+
+// Player data comes from data/players.json, which GitHub refreshes every 3 hours.
+// If that file is missing, we ask FPL directly through /api/players.
+async function loadPlayers() {
+  const saved = await getJSONOrNull("data/players.json");
+  if (saved.ok && saved.json && saved.json.players && saved.json.players.length) return { data: saved.json };
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const live = await getJSONOrNull("/api/players");
+    if (live.ok && live.json && live.json.players) return { data: live.json };
+    if (!live.json && !saved.json) return { noServer: true }; // preview without a server
+    $("statusLine").textContent = "FPL is slow right now, trying again…";
+    await new Promise((res) => setTimeout(res, 1500 * (attempt + 1)));
+  }
+  return { error: "Could not get player data from FPL right now. Try again in a few minutes." };
+}
+
 async function loadData(league) {
   showMessage("");
   $("statusLine").textContent = "Loading players…";
-  try {
-    const [r, oddsJ] = await Promise.all([
-      fetch("/api/players" + (league ? "?league=" + encodeURIComponent(league) : "")),
-      fetch("/api/odds").then((x) => (x.ok ? x.json() : null)).catch(() => null)
-    ]);
-    const j = await r.json();
-    if (r.ok) attachOdds(j, oddsJ);
-    if (!r.ok) {
-      if (LIVE) { showMessage(j.error || "Something went wrong. Try again.", "error"); $("statusLine").textContent = ""; return; }
-      throw new Error("no live server");
+  const oddsP = getJSONOrNull("/api/odds");
+  const leagueP = league ? getJSONOrNull("/api/league?league=" + encodeURIComponent(league)) : null;
+  const p = await loadPlayers();
+
+  if (p.noServer) { DATA = demoData(league); render(); return; }
+  if (p.error) { showMessage(p.error, "error"); $("statusLine").textContent = ""; return; }
+
+  LIVE = true;
+  const data = JSON.parse(JSON.stringify(p.data));
+  data.league = null; data.leagueSize = null;
+  data.players.forEach((x) => (x.available = null));
+
+  if (leagueP) {
+    const l = await leagueP;
+    if (l.ok && l.json && l.json.taken) {
+      const taken = new Set(l.json.taken);
+      data.league = league; data.leagueSize = l.json.leagueSize;
+      data.players.forEach((x) => (x.available = !taken.has(x.id)));
+    } else {
+      DATA = data; attachOdds(DATA, (await oddsP).json); render();
+      showMessage((l.json && l.json.error) || "Could not check your league right now. Showing all players instead.", "error");
+      return;
     }
-    LIVE = true;
-    DATA = { ...j, demo: false };
-  } catch (e) {
-    if (LIVE) { showMessage("Could not load player data. Check your connection and try again.", "error"); return; }
-    DATA = demoData(league);
   }
+  attachOdds(data, (await oddsP).json);
+  DATA = { ...data, demo: false };
   render();
 }
 
@@ -443,6 +478,15 @@ function showMessage(text, kind) {
 /* ---------- Scoring ---------- */
 const avg = (a) => (a.length ? a.reduce((s, x) => s + x, 0) / a.length : 0);
 const clamp01 = (x) => Math.max(0, Math.min(1, x));
+// Expected defensive contribution points per full match (2 points when a defender makes 10+
+// clearances, blocks, interceptions and tackles, or a midfielder/forward 12+ including recoveries)
+function defconPts(p) {
+  if (p.pos === "GK" || !p.defcon90) return 0;
+  const need = p.pos === "DEF" ? 10 : 12, l = p.defcon90;
+  let cdf = 0, term = Math.exp(-l);
+  for (let k = 0; k < need; k++) { cdf += term; term *= l / (k + 1); }
+  return 2 * (1 - cdf);
+}
 const isDefender = (p) => p.pos === "GK" || p.pos === "DEF";
 // How good a single fixture is for this player, 0 (hard) to 1 (easy).
 // Uses betting odds when we have them, otherwise FPL's difficulty rating.
@@ -470,7 +514,7 @@ function scorePlayers(data) {
     // Everyone else: expected goals and assists turned into FPL points.
     const threat = p.pos === "GK"
       ? ((p.saves || 0) / 3 + 0.5 * Math.max(0, (p.xgc || 0) - (p.goalsConceded || 0))) / n90
-      : (goalPts[p.pos] * p.xg + 3 * p.xa) / n90;
+      : (goalPts[p.pos] * p.xg + 3 * p.xa) / n90 + defconPts(p);
     const fx = (p.fixtures || []).slice(0, CONFIG.fixture_window);
     return {
       ...p, threat,
@@ -515,7 +559,7 @@ function projectPlayer(p, gws, horizon) {
     if (f.odds) { cs = f.odds.cs; attMult = Math.max(0.5, Math.min(1.6, f.odds.xg / 1.4)); }
     else { cs = Math.max(0.05, Math.min(0.5, 0.5 - 0.09 * f.diff)); attMult = 1 + (3 - f.diff) * 0.12; }
     const fit = i === 0 ? fitNow : i === 1 && fitNow === 0 ? 0.5 : 1;
-    return sum + fit * share * (2 + attack90 * attMult + csPts * cs + saves90 / 3);
+    return sum + fit * share * (2 + attack90 * attMult + csPts * cs + saves90 / 3 + defconPts(p));
   }, 0);
 }
 
@@ -569,7 +613,8 @@ function renderVBD() {
 /* ---------- Rendering ---------- */
 function render() {
   if (!DATA) return;
-    let all = scorePlayers(DATA);
+  let all = scorePlayers(DATA);
+  // In "All", compare across positions by expected points instead of position-based score
   if (currentPos === "ALL") {
     const gws = Math.max(1, DATA.gameweeksPlayed);
     const adj = new Map((CONFIG.player_adjustments || []).map((x) => [norm(x.name) + "|" + norm(x.team), x]));
@@ -593,8 +638,13 @@ function render() {
   $("statusLine").textContent = inLeague
     ? `Players nobody owns in league ${DATA.league}, ranked${gw}.`
     : `Every player in the game, ranked${gw}. Enter your league ID to see only free agents.`;
+  if (currentPos === "ALL") $("statusLine").textContent += " With all positions shown, players are ranked by expected points over the next few matches.";
 
   if (DATA.leagueSize && DATA.leagueSize >= 4 && DATA.leagueSize <= 16) $("vbdTeams").value = DATA.leagueSize;
+  if (DATA.updated) {
+    const h = Math.round((Date.now() - new Date(DATA.updated)) / 3600000);
+    $("statusLine").textContent += h < 1 ? " Data updated less than an hour ago." : ` Data updated ${h} hour${h === 1 ? "" : "s"} ago.`;
+  }
   if (DATA.demo) showMessage("Demo mode: these are made-up players so you can try the tool. Real data appears once the site is live.");
 
   const limit = CONFIG.paywall ? CONFIG.free_limit : visibleCount;
