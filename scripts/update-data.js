@@ -25,6 +25,59 @@ async function getJSON(url) {
   throw new Error('Could not fetch ' + url);
 }
 
+// Minimal CSV parser that handles quoted fields
+function parseCSV(text) {
+  const rows = []; let row = [], field = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) {
+      if (c === '"' && text[i + 1] === '"') { field += '"'; i++; }
+      else if (c === '"') q = false;
+      else field += c;
+    } else if (c === '"') q = true;
+    else if (c === ',') { row.push(field); field = ''; }
+    else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
+    else if (c !== '\r') field += c;
+  }
+  if (field || row.length) { row.push(field); rows.push(row); }
+  const head = rows.shift() || [];
+  return rows.filter((r) => r.length === head.length).map((r) => Object.fromEntries(head.map((h, i) => [h, r[i]])));
+}
+
+// Last season's totals per player (matched by FPL's permanent player code),
+// used as a starting point early in the season when there is little data.
+async function lastSeasonPriors(currentSeasonStartYear) {
+  const y = currentSeasonStartYear - 1;
+  const season = `${y}-${String((y + 1) % 100).padStart(2, '0')}`;
+  const url = `https://raw.githubusercontent.com/vaastav/Fantasy-Premier-League/master/data/${season}/players_raw.csv`;
+  try {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('status ' + r.status);
+    const rows = parseCSV(await r.text());
+    const out = new Map();
+    rows.forEach((p) => {
+      const min = Number(p.minutes) || 0;
+      if (min < 1) return;
+      const n90 = min / 90;
+      out.set(Number(p.code), {
+        min,
+        pos: { 1: 'GK', 2: 'DEF', 3: 'MID', 4: 'FWD' }[Number(p.element_type)],
+        xg: +((Number(p.expected_goals) || 0) / n90).toFixed(3),
+        xa: +((Number(p.expected_assists) || 0) / n90).toFixed(3),
+        sv: +((Number(p.saves) || 0) / n90).toFixed(3),
+        xgc: +((Number(p.expected_goals_conceded) || 0) / n90).toFixed(3),
+        bon: +((Number(p.bonus) || 0) / n90).toFixed(3),
+        share: +Math.min(1, min / (90 * 38)).toFixed(3),
+      });
+    });
+    console.log(`Loaded last-season data for ${out.size} players (${season})`);
+    return out;
+  } catch (e) {
+    console.log('Could not load last-season data: ' + e.message);
+    return new Map();
+  }
+}
+
 (async () => {
   const draft = await getJSON(`${DRAFT}/bootstrap-static`);
   const classic = await getJSON(`${FPL}/bootstrap-static/`);
@@ -48,6 +101,25 @@ async function getJSON(url) {
     (fx[f.team_a] = fx[f.team_a] || []).push({ opp: teamShort[f.team_h], home: false, diff: f.team_a_difficulty, gw: f.event });
   });
 
+  // Season start year, e.g. 2026 for 2026/27
+  const firstKick = (classic.events[0] && classic.events[0].deadline_time) || new Date().toISOString();
+  const seasonYear = new Date(firstKick).getUTCFullYear();
+  const priors = await lastSeasonPriors(seasonYear);
+
+  // Minutes in each of the last 4 finished gameweeks
+  const finished = classic.events.filter((e) => e.finished).map((e) => e.id).slice(-4);
+  const recent = new Map();
+  for (const gw of finished) {
+    try {
+      const live = await getJSON(`${FPL}/event/${gw}/live/`);
+      (live.elements || []).forEach((el) => {
+        const arr = recent.get(el.id) || [];
+        arr.push((el.stats && el.stats.minutes) || 0);
+        recent.set(el.id, arr);
+      });
+    } catch (e) { console.log(`No live data for gameweek ${gw}`); }
+  }
+
   const players = draft.elements.map((d) => {
     const pos = POS[d.element_type];
     if (!pos) return null;
@@ -67,6 +139,9 @@ async function getJSON(url) {
       points: c.total_points || 0,
       status: c.status, chance: c.chance_of_playing_next_round, news: c.news || '',
       fixtures: (fx[c.team] || []).slice(0, 6),
+      bonus: c.bonus || 0,
+      recentShare: recent.has(c.id) && finished.length ? +(recent.get(c.id).reduce((x, y) => x + y, 0) / (90 * finished.length)).toFixed(3) : null,
+      prior: priors.get(c.code) || null,
     };
   }).filter(Boolean);
 
