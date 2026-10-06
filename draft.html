@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Draft Assistant – Simple Draft</title>
+<meta name="description" content="Live FPL Draft assistant: mark picks as they happen and see the best pick for your turn, based on how fast each position runs dry.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%227%22%20fill%3D%22%23F2C230%22%2F%3E%3Cg%20fill%3D%22none%22%20stroke%3D%22%231E573D%22%20stroke-width%3D%222.4%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Ccircle%20cx%3D%229%22%20cy%3D%2223%22%20r%3D%223.3%22%2F%3E%3Cpath%20d%3D%22M20.5%206.5l5%205M25.5%206.5l-5%205%22%2F%3E%3Cpath%20d%3D%22M10%2017C10.5%2012%2012%2010.5%2015.5%2010.5%22%20stroke-dasharray%3D%222.4%202.6%22%2F%3E%3Cpath%20d%3D%22M14.2%207.8l2.8%202.7-2.6%202.9%22%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #F3F6F1; --surface: #FFFFFF; --ink: #14261D; --muted: #56675D; --line: #D6E0D8;
+  --pitch: #1E573D; --pitch-2: #236446; --on-pitch: #F3F8F4; --bib: #F2C230; --bib-ink: #2A2204;
+  --good: #2B8A56; --mid: #9AA89F; --bad: #C24558;
+  --display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --body: "Barlow", "Segoe UI", system-ui, -apple-system, sans-serif;
+  box-sizing: border-box;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0E1913; --surface: #15231B; --ink: #E4EEE7; --muted: #9BAFA3;
+    --line: #26392E; --pitch: #184632; --pitch-2: #1C5039; --mid: #6E8277;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0E1913; --surface: #15231B; --ink: #E4EEE7; --muted: #9BAFA3;
+  --line: #26392E; --pitch: #184632; --pitch-2: #1C5039; --mid: #6E8277;
+}
+*, *::before, *::after { box-sizing: inherit; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 17px; line-height: 1.45; -webkit-font-smoothing: antialiased; }
+a { color: inherit; }
+:focus-visible { outline: 3px solid var(--bib); outline-offset: 2px; }
+.wrap { width: min(1180px, 100% - 32px); margin-inline: auto; }
+h1, h2, h3 { font-family: var(--display); font-weight: 700; line-height: 1.02; margin: 0; }
+p { margin: 0; }
+button, input, select { font: inherit; }
+
+.top { background: var(--pitch); color: var(--on-pitch); }
+.top .wrap { display: flex; align-items: center; justify-content: space-between; padding-block: 14px; }
+.brand { font-family: var(--display); font-weight: 700; font-size: 1.5rem; text-decoration: none; display: flex; align-items: center; gap: 10px; }
+.top nav { display: flex; gap: 22px; font-weight: 500; font-size: 0.98rem; }
+.top nav a { text-decoration: none; opacity: 0.85; }
+.top nav a:hover, .top nav a[aria-current] { opacity: 1; text-decoration: underline; }
+
+/* Clock bar */
+.clock { background: repeating-linear-gradient(90deg, var(--pitch) 0 90px, var(--pitch-2) 90px 180px); color: var(--on-pitch); padding: 22px 0 24px; }
+.clock .wrap { display: flex; flex-wrap: wrap; gap: 18px 32px; align-items: end; justify-content: space-between; }
+.clock h1 { font-size: clamp(2rem, 5vw, 3.2rem); }
+.clock .sub { opacity: 0.9; margin-top: 4px; }
+.clock.mine { background: var(--bib); color: var(--bib-ink); }
+.setup { display: flex; gap: 12px; flex-wrap: wrap; align-items: end; }
+.setup label { display: grid; gap: 4px; font-size: 0.82rem; font-weight: 600; }
+.setup select { padding: 8px 10px; border-radius: 8px; border: 0; background: var(--on-pitch); color: #14261D; font-size: 1rem; }
+.ghost { background: transparent; border: 1.5px solid currentColor; color: inherit; border-radius: 8px; padding: 7px 12px; cursor: pointer; font-weight: 600; }
+
+main { padding: 22px 0 60px; }
+.grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 22px; align-items: start; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 18px; }
+.panel h2 { font-size: 1.6rem; margin-bottom: 10px; }
+.muted { color: var(--muted); }
+.small { font-size: 0.88rem; }
+
+/* Pick entry */
+.entry { position: relative; }
+.entry input { width: 100%; font-size: 1.15rem; padding: 14px 16px; border-radius: 10px; border: 2px solid var(--line); background: var(--surface); color: var(--ink); }
+.entry input:focus { border-color: var(--pitch-2); outline: none; }
+.hint { margin-top: 8px; }
+.sugg { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+.sugg li { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; }
+.sugg li.first { border-color: var(--pitch-2); }
+.btn { border: 0; border-radius: 8px; padding: 8px 14px; font-weight: 600; cursor: pointer; background: var(--line); color: var(--ink); }
+.btn.mine { background: var(--bib); color: var(--bib-ink); }
+.btn.go { background: var(--pitch); color: var(--on-pitch); }
+
+/* Recommendations */
+.recs { display: grid; gap: 10px; margin-top: 4px; }
+.rec { display: grid; grid-template-columns: 34px 1fr auto; gap: 12px; align-items: center; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line); }
+.rec.best { border: 2px solid var(--pitch-2); }
+.rec .n { font-family: var(--display); font-size: 1.8rem; color: var(--muted); text-align: center; }
+.rec .why { font-size: 0.92rem; color: var(--muted); }
+.pname { font-weight: 600; }
+.tag { display: inline-block; font-size: 0.75rem; font-weight: 600; padding: 2px 7px; border-radius: 999px; background: var(--line); margin-left: 6px; vertical-align: 2px; }
+.tag.warn { background: color-mix(in srgb, var(--bad) 20%, var(--surface)); }
+.tag.news { background: color-mix(in srgb, var(--bad) 20%, var(--surface)); }
+
+/* Scarcity bars */
+.scar { display: grid; gap: 10px; margin-top: 6px; }
+.scar-row { display: grid; grid-template-columns: 44px 1fr 64px; gap: 10px; align-items: center; font-size: 0.92rem; }
+.scar-row b { font-family: var(--display); font-size: 1.15rem; }
+.track { height: 10px; border-radius: 5px; background: var(--line); overflow: hidden; }
+.track i { display: block; height: 100%; background: var(--bad); border-radius: 5px; }
+
+/* Table */
+.table-box { overflow-x: auto; margin-top: 10px; }
+table { width: 100%; border-collapse: collapse; min-width: 560px; }
+th { text-align: left; font-size: 0.8rem; font-weight: 600; color: var(--muted); padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+td { padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+td.num { font-variant-numeric: tabular-nums; }
+.filters { display: flex; gap: 6px; flex-wrap: wrap; }
+.filters button { border: 1px solid var(--line); background: var(--surface); color: var(--muted); border-radius: 8px; padding: 6px 12px; font-weight: 600; cursor: pointer; }
+.filters button[aria-pressed="true"] { background: var(--pitch); color: var(--on-pitch); border-color: var(--pitch); }
+
+/* Squad and log */
+.squad { display: grid; gap: 8px; }
+.pos-line { display: grid; grid-template-columns: 44px 1fr; gap: 8px; align-items: start; }
+.pos-line b { font-family: var(--display); font-size: 1.1rem; }
+.chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.chip { font-size: 0.85rem; padding: 3px 8px; border-radius: 6px; background: color-mix(in srgb, var(--bib) 35%, var(--surface)); }
+.chip.empty { background: transparent; border: 1px dashed var(--line); color: var(--muted); }
+.log { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; max-height: 260px; overflow-y: auto; }
+.log li { display: flex; justify-content: space-between; gap: 10px; font-size: 0.92rem; padding: 4px 0; border-bottom: 1px solid var(--line); }
+.log li.me { font-weight: 600; }
+.side { display: grid; gap: 22px; grid-template-columns: minmax(0, 1fr); min-width: 0; }
+.msg { background: var(--bib); color: var(--bib-ink); border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; font-size: 0.95rem; }
+
+@media (max-width: 860px) {
+  .grid { grid-template-columns: minmax(0, 1fr); }
+  .top nav { display: none; }
+}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="index.html"><svg viewBox="0 0 32 32" width="30" height="30" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#F2C230"/><g fill="none" stroke="#1E573D" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="23" r="3.3"/><path d="M20.5 6.5l5 5M25.5 6.5l-5 5"/><path d="M10 17C10.5 12 12 10.5 15.5 10.5" stroke-dasharray="2.4 2.6"/><path d="M14.2 7.8l2.8 2.7-2.6 2.9"/></g></svg><span>Simple Draft</span></a>
+    <nav aria-label="Main">
+      <a href="index.html#tool">Free agents</a>
+      <a href="index.html#redraft">Redraft board</a>
+      <a href="draft.html" aria-current="page">Draft assistant</a>
+    </nav>
+  </div>
+</header>
+
+<div class="clock" id="clock">
+  <div class="wrap">
+    <div>
+      <h1 id="clockTitle">Draft assistant</h1>
+      <p class="sub" id="clockSub">Loading players…</p>
+    </div>
+    <div class="setup">
+      <label>Teams in league <select id="teams"></select></label>
+      <label>Your pick in round 1 <select id="slot"></select></label>
+      <button class="ghost" id="resetBtn" type="button">New draft</button>
+    </div>
+  </div>
+</div>
+
+<main>
+  <div class="wrap">
+    <div id="messages"></div>
+    <div class="grid">
+      <div class="side">
+        <section class="panel" aria-labelledby="enterHead">
+          <h2 id="enterHead">Who was just picked?</h2>
+          <div class="entry">
+            <input id="search" autocomplete="off" placeholder="Type a name, e.g. Saka" aria-label="Search for the player who was picked">
+            <p class="hint muted small">Enter marks the top match as taken by someone else. Shift + Enter marks it as yours.</p>
+            <ul class="sugg" id="sugg"></ul>
+          </div>
+        </section>
+
+        <section class="panel" aria-labelledby="recHead">
+          <h2 id="recHead">Best pick for you</h2>
+          <p class="muted small" id="recIntro"></p>
+          <div class="recs" id="recs"></div>
+        </section>
+
+        <section class="panel" aria-labelledby="poolHead">
+          <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center">
+            <h2 id="poolHead" style="margin:0">Available players</h2>
+            <div class="filters" id="filters">
+              <button aria-pressed="true" data-pos="ALL">All</button>
+              <button aria-pressed="false" data-pos="GK">GK</button>
+              <button aria-pressed="false" data-pos="DEF">DEF</button>
+              <button aria-pressed="false" data-pos="MID">MID</button>
+              <button aria-pressed="false" data-pos="FWD">FWD</button>
+            </div>
+          </div>
+          <div class="table-box">
+            <table>
+              <thead><tr><th>Player</th><th>Season points</th><th>Drop-off if you wait</th><th>Pick value</th><th></th></tr></thead>
+              <tbody id="pool"></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
+      <div class="side">
+        <section class="panel" aria-labelledby="scarHead">
+          <h2 id="scarHead">How fast positions run dry</h2>
+          <p class="muted small">Points you lose by waiting until your next pick to take the best player at each position.</p>
+          <div class="scar" id="scar"></div>
+        </section>
+
+        <section class="panel" aria-labelledby="squadHead">
+          <h2 id="squadHead">Your squad</h2>
+          <div class="squad" id="squad"></div>
+        </section>
+
+        <section class="panel" aria-labelledby="logHead">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+            <h2 id="logHead" style="margin:0">Picks so far</h2>
+            <button class="btn" id="undoBtn" type="button">Undo last</button>
+          </div>
+          <ul class="log" id="log" style="margin-top:10px"></ul>
+        </section>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+/* ---------- Settings ---------- */
+const SQUAD = { GK: 2, DEF: 5, MID: 5, FWD: 3 };      // FPL Draft squad
+const STARTERS = { GK: 1, DEF: 4, MID: 4, FWD: 2 };   // typical starting spots
+const BENCH_WEIGHT = 0.4;                              // bench players count less
+const ROUNDS = 15;
+const POSITIONS = ["GK", "DEF", "MID", "FWD"];
+
+let CONFIG = { vbd_horizon: 6, player_adjustments: [] };
+let PLAYERS = [];
+let GWS = 1;
+let DEMO = false;
+let state = { teams: 10, slot: 1, picks: [] }; // picks: [{ id, mine }]
+let poolPos = "ALL";
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const norm = (s) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
+
+function save() { try { localStorage.setItem("sd-draft", JSON.stringify(state)); } catch (e) {} }
+function restore() {
+  try { const s = JSON.parse(localStorage.getItem("sd-draft") || "null"); if (s && Array.isArray(s.picks)) state = { ...state, ...s }; } catch (e) {}
+}
+
+/* ---------- Projection (same model as the redraft board) ---------- */
+function defconPts(p) {
+  if (p.pos === "GK" || !p.defcon90) return 0;
+  const need = p.pos === "DEF" ? 10 : 12, l = p.defcon90;
+  let cdf = 0, term = Math.exp(-l);
+  for (let k = 0; k < need; k++) { cdf += term; term *= l / (k + 1); }
+  return 2 * (1 - cdf);
+}
+function projectPlayer(p, gws, horizon) {
+  const goalPts = { GK: 6, DEF: 6, MID: 5, FWD: 4 }[p.pos];
+  const csPts = { GK: 4, DEF: 4, MID: 1, FWD: 0 }[p.pos];
+  const n90 = Math.max(p.minutes / 90, 2);
+  const share = Math.min(1, p.minutes / (90 * Math.max(1, gws)));
+  const attack90 = (goalPts * p.xg + 3 * p.xa) / n90;
+  const saves90 = (p.saves || 0) / n90;
+  const out = ["i", "s", "u", "n"].includes(p.status);
+  const fitNow = p.chance == null ? (out ? 0 : 1) : p.chance / 100;
+  const fx = (p.fixtures || []).slice(0, horizon);
+  return fx.reduce((sum, f, i) => {
+    let cs, attMult;
+    if (f.odds) { cs = f.odds.cs; attMult = Math.max(0.5, Math.min(1.6, f.odds.xg / 1.4)); }
+    else { cs = Math.max(0.05, Math.min(0.5, 0.5 - 0.09 * f.diff)); attMult = 1 + (3 - f.diff) * 0.12; }
+    const fit = i === 0 ? fitNow : i === 1 && fitNow === 0 ? 0.5 : 1;
+    return sum + fit * share * (2 + attack90 * attMult + csPts * cs + saves90 / 3 + defconPts(p));
+  }, 0);
+}
+
+// Season-long projection for redraft: ignores the fixture schedule.
+// Tested on the 2024/25 and 2025/26 seasons. Early in the season each player's rates start
+// from last season (or a position average for new players) and this season's numbers take
+// over as matches are played. Minutes mix the whole season with the last 4 gameweeks.
+let POS_AVG = null;
+function computePosAvg(players) {
+  const out = {};
+  ["GK", "DEF", "MID", "FWD"].forEach((pos) => {
+    const g = players.filter((p) => p.pos === pos && p.minutes >= 270);
+    const n90 = Math.max(1, g.reduce((s, p) => s + p.minutes / 90, 0));
+    const sum = (f) => g.reduce((s, p) => s + (f(p) || 0), 0);
+    out[pos] = { xg: sum((p) => p.xg) / n90, xa: sum((p) => p.xa) / n90, sv: sum((p) => p.saves) / n90, bon: sum((p) => p.bonus) / n90, xgc: 1.35 };
+  });
+  return out;
+}
+function projectSeason(p, gws) {
+  const goalPts = { GK: 6, DEF: 6, MID: 5, FWD: 4 }[p.pos];
+  const csPts = { GK: 4, DEF: 4, MID: 1, FWD: 0 }[p.pos];
+  const n90 = p.minutes / 90;
+  const pr = p.prior && p.prior.pos === p.pos && p.prior.min >= 450 ? p.prior : null;
+  const base = pr || (POS_AVG && POS_AVG[p.pos]) || { xg: 0.1, xa: 0.08, sv: 0, bon: 0.15, xgc: 1.35 };
+  const k = pr ? 5 : 2.5; // how many matches the starting point is worth
+  const rate = (total, key) => ((total || 0) + base[key] * k) / (n90 + k);
+  const xg90 = rate(p.xg, "xg"), xa90 = rate(p.xa, "xa"), sv90 = rate(p.saves, "sv");
+  const xgc90 = rate(p.xgc, "xgc"), bon90 = rate(p.bonus, "bon");
+  let share = Math.min(1, p.minutes / (90 * Math.max(1, gws)));
+  if (p.recentShare != null) share = 0.5 * share + 0.5 * p.recentShare;
+  if (pr) share = (share * gws + pr.share * 2) / (gws + 2);
+  const att = goalPts * xg90 + 3 * xa90;
+  const conceded = p.pos === "GK" || p.pos === "DEF" ? 0.5 * xgc90 : 0;
+  const perMatch = share * (2 + att + csPts * Math.exp(-xgc90) + sv90 / 3 + bon90 + defconPts(p) - conceded);
+  const left = Math.max(1, 38 - gws);
+  const out = ["i", "s", "u", "n"].includes(p.status);
+  const missing = p.chance == null ? (out ? 2 : 0) : (100 - p.chance) / 100;
+  return Math.max(0, perMatch) * Math.max(0, left - missing);
+}
+
+/* ---------- Demo players for the preview ---------- */
+function rng(seed) { return function () { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+function demoPlayers() {
+  const r = rng(7);
+  const teams = ["ARS","AVL","BOU","BRE","BHA","CHE","CRY","EVE","FUL","LIV","MCI","MUN","NEW","NFO","TOT","WHU","WOL","BUR","LEE","SUN"];
+  const syl = ["ka","lo","ma","ri","to","sen","van","dor","el","mi","no","ra","gu","be","zi","fe","sa","ol","an","te"];
+  const name = () => String.fromCharCode(65 + Math.floor(r() * 26)) + ". " + (syl[Math.floor(r() * 20)] + syl[Math.floor(r() * 20)] + syl[Math.floor(r() * 20)]).replace(/^./, (c) => c.toUpperCase());
+  const plan = [["GK", 40], ["DEF", 130], ["MID", 150], ["FWD", 60]];
+  const out = []; let id = 1;
+  plan.forEach(([pos, n]) => {
+    for (let i = 0; i < n; i++) {
+      const q = Math.pow(r(), pos === "FWD" ? 2.6 : 1.8); // forwards: few good ones
+      const minutes = Math.round(540 * (0.2 + 0.8 * Math.min(1, q * 1.6 + r() * 0.3)));
+      const n90 = minutes / 90, atk = { GK: 0, DEF: 0.08, MID: 0.3, FWD: 0.55 }[pos];
+      out.push({
+        id: id++, name: name(), team: teams[Math.floor(r() * 20)], pos, minutes,
+        xg: +(n90 * atk * (0.2 + q * 1.6)).toFixed(2), xa: +(n90 * atk * 0.5 * (0.2 + q * 1.4)).toFixed(2),
+        saves: pos === "GK" ? Math.round(n90 * (1 + q * 3)) : 0, xgc: +(n90 * (1.7 - q * 0.8)).toFixed(2), defcon90: pos === "GK" ? 0 : 4 + r() * 7,
+        status: "a", chance: null, news: "",
+        fixtures: Array.from({ length: 6 }, () => ({ diff: 2 + Math.floor(r() * 4) }))
+      });
+    }
+  });
+  return out;
+}
+
+/* ---------- Loading ---------- */
+async function getJSON(url) {
+  try { const r = await fetch(url, { cache: "no-store" }); if (!r.ok) return null; return await r.json(); } catch (e) { return null; }
+}
+async function load() {
+  restore();
+  const cfg = await getJSON("config.json");
+  if (cfg) CONFIG = { ...CONFIG, ...cfg };
+  let data = await getJSON("data/players.json");
+  if (!data || !data.players) data = await getJSON("/api/players");
+  if (data && data.players) { PLAYERS = data.players; GWS = Math.max(1, data.gameweeksPlayed || 1); }
+  else { PLAYERS = demoPlayers(); GWS = 6; DEMO = true; }
+  const odds = await getJSON("/api/odds");
+  if (odds && odds.matches) attachOdds(odds.matches);
+  const adj = new Map((CONFIG.player_adjustments || []).map((a) => [norm(a.name) + "|" + norm(a.team), a]));
+  POS_AVG = computePosAvg(PLAYERS);
+  PLAYERS.forEach((p) => {
+    p.proj = projectSeason(p, GWS);
+    const a = adj.get(norm(p.name) + "|" + norm(p.team));
+    if (a) p.proj *= 1 + (Number(a.boost) || 0) / 100;
+    p.key = norm(p.name + " " + p.team);
+  });
+  PLAYERS.sort((a, b) => b.proj - a.proj);
+  if (DEMO) $("messages").innerHTML = `<div class="msg">Demo mode: made-up players so you can try the assistant. Real players appear on the live site.</div>`;
+  setupSelects();
+  render();
+}
+function attachOdds(matches) {
+  const byPair = new Map(matches.map((m) => [m.home + "|" + m.away, m]));
+  PLAYERS.forEach((p) => (p.fixtures || []).forEach((f) => {
+    const m = byPair.get(f.home ? p.team + "|" + f.opp : f.opp + "|" + p.team);
+    if (m) f.odds = f.home ? { win: m.pHome, cs: m.csHome, xg: m.xgHome } : { win: m.pAway, cs: m.csAway, xg: m.xgAway };
+  }));
+}
+
+/* ---------- Snake draft order ---------- */
+function teamForPick(pick, n) {
+  const round = Math.ceil(pick / n), idx = (pick - 1) % n;
+  return round % 2 === 1 ? idx + 1 : n - idx;
+}
+function myPicksFrom(pick) {
+  const out = [];
+  for (let p = pick; p <= state.teams * ROUNDS && out.length < 2; p++) if (teamForPick(p, state.teams) === state.slot) out.push(p);
+  return out;
+}
+
+/* ---------- The engine ---------- */
+// Value of a pick = projected points minus the best player at the same position
+// we expect to still be there at your following pick. Positions that run dry fast
+// make their players worth more. Your squad needs scale it: full positions are
+// skipped, bench spots count less than starting spots.
+function analyse() {
+  const takenIds = new Set(state.picks.map((x) => x.id));
+  const avail = PLAYERS.filter((p) => !takenIds.has(p.id));
+  const mine = state.picks.filter((x) => x.mine).map((x) => PLAYERS.find((p) => p.id === x.id)).filter(Boolean);
+  const have = { GK: 0, DEF: 0, MID: 0, FWD: 0 };
+  mine.forEach((p) => have[p.pos]++);
+  const weight = (pos) => have[pos] >= SQUAD[pos] ? 0 : have[pos] < STARTERS[pos] ? 1 : BENCH_WEIGHT;
+
+  const current = state.picks.length + 1;
+  const done = current > state.teams * ROUNDS || mine.length >= ROUNDS;
+  const [next, after] = myPicksFrom(current);
+  const before = next ? next - current : 0;                 // others picking before your turn
+  const between = next && after ? after - next - 1 : Infinity; // others picking between your next two turns
+
+  // Expected to be gone before your turn: the best players others don't need to think twice about
+  const goneSoon = new Set(avail.slice(0, before).map((p) => p.id));
+
+  // Best player per position still around at your following pick, if you take `c` now
+  const removeCount = before + (isFinite(between) ? between : avail.length);
+  function fallback(pos, c) {
+    let removed = 0;
+    for (const p of avail) {
+      if (p.id === c.id) continue;
+      if (removed < removeCount) { removed++; continue; }
+      if (p.pos === pos) return p.proj;
+    }
+    return 0;
+  }
+
+  const rows = avail.slice(0, 160).map((p) => {
+    const w = weight(p.pos);
+    const drop = Math.max(0, p.proj - fallback(p.pos, p));
+    return { p, w, drop, value: w * drop + w * 0.15 * p.proj, gone: goneSoon.has(p.id) };
+  });
+  const ranked = rows.filter((r) => r.w > 0).sort((a, b) => b.value - a.value);
+
+  // Scarcity per position: drop-off for the best available player at that position (ignoring likely-gone)
+  const scar = {};
+  POSITIONS.forEach((pos) => {
+    const best = rows.find((r) => r.p.pos === pos && !r.gone);
+    scar[pos] = best ? { drop: best.drop, name: best.p.name } : { drop: 0, name: "" };
+  });
+  return { avail, mine, have, weight, current, next, after, before, rows, ranked, scar, done };
+}
+
+/* ---------- Rendering ---------- */
+function setupSelects() {
+  $("teams").innerHTML = Array.from({ length: 13 }, (_, i) => i + 4).map((n) => `<option ${n === state.teams ? "selected" : ""}>${n}</option>`).join("");
+  fillSlot();
+}
+function fillSlot() {
+  if (state.slot > state.teams) state.slot = state.teams;
+  $("slot").innerHTML = Array.from({ length: state.teams }, (_, i) => i + 1).map((n) => `<option ${n === state.slot ? "selected" : ""}>${n}</option>`).join("");
+}
+
+function render() {
+  const A = analyse();
+  const round = Math.ceil(A.current / state.teams);
+  const onClock = teamForPick(A.current, state.teams);
+  const myTurn = !A.done && onClock === state.slot;
+
+  $("clock").classList.toggle("mine", myTurn);
+  if (A.done) {
+    $("clockTitle").textContent = "Draft finished";
+    $("clockSub").textContent = `${state.picks.length} picks made. Good luck this season.`;
+  } else if (myTurn) {
+    $("clockTitle").textContent = "You're on the clock";
+    $("clockSub").textContent = `Pick ${A.current}, round ${round}. Your next pick after this is ${A.after ? "pick " + A.after : "the last one"}.`;
+  } else {
+    $("clockTitle").textContent = `${A.before} pick${A.before === 1 ? "" : "s"} until your turn`;
+    $("clockSub").textContent = `Pick ${A.current}, round ${round}. Team ${onClock} is picking. You pick at ${A.next ? "pick " + A.next : "—"}.`;
+  }
+
+  // Recommendations
+  const options = A.ranked.filter((r) => !r.gone).slice(0, 3);
+  const fallers = A.ranked.filter((r) => r.gone).slice(0, 2);
+  $("recIntro").textContent = myTurn
+    ? "Take one of these now. Value counts what you'd lose by waiting a round, and what your squad still needs."
+    : `Plan for pick ${A.next}. The ${A.before} best players are likely gone by then, so these are the ones to aim for.`;
+  const recHTML = (r, i, top) => {
+    const posLeft = SQUAD[r.p.pos] - A.have[r.p.pos];
+    const why = r.drop > 0.5
+      ? `Next best ${r.p.pos} at your following pick scores about ${r.drop.toFixed(1)} fewer points.`
+      : `Plenty of similar ${r.p.pos === "DEF" ? "defenders" : r.p.pos === "MID" ? "midfielders" : r.p.pos === "FWD" ? "forwards" : "goalkeepers"} left, but the best overall value.`;
+    const bench = r.w < 1 ? " Fills a bench spot." : "";
+    return `<div class="rec ${top ? "best" : ""}">
+      <span class="n">${i}</span>
+      <div><div class="pname">${esc(r.p.name)} <span class="muted small">${esc(r.p.team)}, ${r.p.pos}</span>${r.p.news ? `<span class="tag news" title="${esc(r.p.news)}">News</span>` : ""}</div>
+        <div class="why">${why}${bench} ${posLeft} ${r.p.pos} spot${posLeft === 1 ? "" : "s"} left in your squad.</div></div>
+      <button class="btn mine" data-mine="${r.p.id}">Mine</button>
+    </div>`;
+  };
+  $("recs").innerHTML = A.done ? `<p class="muted">Your squad is complete.</p>` :
+    options.map((r, i) => recHTML(r, i + 1, i === 0)).join("") +
+    (fallers.length && !myTurn ? `<p class="muted small" style="margin-top:6px">If one falls to you: ${fallers.map((r) => `<b>${esc(r.p.name)}</b> (${r.p.pos})`).join(", ")}. They would jump straight to the top.</p>` : "");
+
+  // Scarcity bars
+  const maxDrop = Math.max(...POSITIONS.map((p) => A.scar[p].drop), 1);
+  $("scar").innerHTML = POSITIONS.map((pos) => {
+    const s = A.scar[pos], full = A.weight(pos) === 0;
+    return `<div class="scar-row"><b>${pos}</b>
+      <div class="track" title="${esc(s.name)}"><i style="width:${full ? 0 : Math.round((s.drop / maxDrop) * 100)}%"></i></div>
+      <span class="num small">${full ? "Full" : "−" + s.drop.toFixed(1) + " pts"}</span></div>`;
+  }).join("");
+
+  // Squad
+  $("squad").innerHTML = POSITIONS.map((pos) => {
+    const mine = A.mine.filter((p) => p.pos === pos);
+    const empties = SQUAD[pos] - mine.length;
+    return `<div class="pos-line"><b>${pos}</b><div class="chips">${mine.map((p) => `<span class="chip">${esc(p.name)}</span>`).join("")}${Array.from({ length: Math.max(0, empties) }, () => `<span class="chip empty">Open</span>`).join("")}</div></div>`;
+  }).join("");
+
+  // Log
+  $("log").innerHTML = state.picks.slice().reverse().map((x, i) => {
+    const p = PLAYERS.find((q) => q.id === x.id);
+    const n = state.picks.length - i;
+    return `<li class="${x.mine ? "me" : ""}"><span>${n}. ${p ? esc(p.name) : "?"} <span class="muted small">${p ? p.pos : ""}</span></span><span class="muted small">${x.mine ? "You" : "Team " + teamForPick(n, state.teams)}</span></li>`;
+  }).join("") || `<li class="muted">No picks yet. When the draft starts, type each pick as it happens.</li>`;
+  $("undoBtn").disabled = !state.picks.length;
+
+  // Pool
+  const byId = new Map(A.rows.map((r) => [r.p.id, r]));
+  let pool = A.avail.filter((p) => poolPos === "ALL" || p.pos === poolPos).slice(0, 60);
+  pool = pool.map((p) => byId.get(p.id) || { p, w: A.weight(p.pos), drop: 0, value: 0, gone: false })
+    .sort((a, b) => b.value - a.value || b.p.proj - a.p.proj);
+  $("pool").innerHTML = pool.map((r) => `<tr>
+    <td><span class="pname">${esc(r.p.name)}</span> <span class="muted small">${esc(r.p.team)}, ${r.p.pos}</span>${r.gone && !myTurn ? `<span class="tag warn">Likely gone</span>` : ""}${r.w === 0 ? `<span class="tag">Position full</span>` : ""}</td>
+    <td class="num">${r.p.proj.toFixed(1)}</td>
+    <td class="num">${r.drop > 0 ? "−" + r.drop.toFixed(1) : "0"}</td>
+    <td class="num"><b>${r.value.toFixed(1)}</b></td>
+    <td style="white-space:nowrap"><button class="btn" data-taken="${r.p.id}">Taken</button> <button class="btn mine" data-mine="${r.p.id}">Mine</button></td>
+  </tr>`).join("");
+
+  renderSugg();
+}
+
+function matches() {
+  const q = norm($("search").value);
+  if (!q) return [];
+  const taken = new Set(state.picks.map((x) => x.id));
+  return PLAYERS.filter((p) => !taken.has(p.id) && p.key.includes(q)).slice(0, 5);
+}
+function renderSugg() {
+  const m = matches();
+  $("sugg").innerHTML = m.map((p, i) => `<li class="${i === 0 ? "first" : ""}">
+    <span><span class="pname">${esc(p.name)}</span> <span class="muted small">${esc(p.team)}, ${p.pos}</span></span>
+    <button class="btn" data-taken="${p.id}">Taken</button><button class="btn mine" data-mine="${p.id}">Mine</button></li>`).join("");
+}
+
+/* ---------- Actions ---------- */
+function pick(id, mine) {
+  if (state.picks.some((x) => x.id === id)) return;
+  state.picks.push({ id, mine });
+  save();
+  $("search").value = "";
+  render();
+  $("search").focus();
+}
+document.addEventListener("click", (e) => {
+  const t = e.target.closest("[data-taken],[data-mine]");
+  if (!t) return;
+  if (t.dataset.taken) pick(Number(t.dataset.taken), false);
+  else pick(Number(t.dataset.mine), true);
+});
+$("search").addEventListener("input", renderSugg);
+$("search").addEventListener("keydown", (e) => {
+  if (e.key !== "Enter") return;
+  const m = matches();
+  if (m.length) { e.preventDefault(); pick(m[0].id, e.shiftKey); }
+});
+$("undoBtn").addEventListener("click", () => { state.picks.pop(); save(); render(); });
+$("resetBtn").addEventListener("click", () => {
+  if (state.picks.length && !confirm("Start a new draft? This clears all picks.")) return;
+  state.picks = []; save(); render();
+});
+$("teams").addEventListener("change", () => { state.teams = Number($("teams").value); fillSlot(); save(); render(); });
+$("slot").addEventListener("change", () => { state.slot = Number($("slot").value); save(); render(); });
+$("filters").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  poolPos = b.dataset.pos;
+  $("filters").querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", x === b ? "true" : "false"));
+  render();
+});
+
+load();
+</script>
+</body>
+</html>

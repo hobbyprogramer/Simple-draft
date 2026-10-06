@@ -178,6 +178,7 @@ footer { padding: 32px 0 48px; color: var(--muted); font-size: 0.9rem; border-to
     <nav aria-label="Main">
       <a href="#tool">Free agents</a>
       <a href="#redraft">Redraft board</a>
+      <a href="draft.html">Draft assistant</a>
       <a href="#how">How scores work</a>
       <a href="#notes">Weekly notes</a>
       <a href="#pricing" class="paid-only">Season pass</a>
@@ -188,15 +189,15 @@ footer { padding: 32px 0 48px; color: var(--muted); font-size: 0.9rem; border-to
 <div class="hero">
   <div class="wrap">
     <h1>Who's worth a waiver claim this week?</h1>
-    <p class="lead">Enter your FPL Draft league ID and see the best players nobody in your league owns yet, ranked by xG, minutes and fixtures.</p>
+    <p class="lead">Enter your FPL Draft Team ID and see the best players nobody in your league owns yet, ranked by xG, minutes and fixtures.</p>
     <form class="search" id="searchForm" onsubmit="return false">
-      <input id="leagueInput" inputmode="numeric" autocomplete="off" placeholder="League ID, e.g. 12345" aria-label="League ID">
+      <input id="leagueInput" inputmode="numeric" autocomplete="off" placeholder="Team ID, e.g. 123456" aria-label="Team ID">
       <button class="btn" type="submit" id="goBtn">Show free agents</button>
       <button class="btn btn-ghost" type="button" id="allBtn">Rank all players</button>
     </form>
     <details class="help">
-      <summary>Where do I find my league ID?</summary>
-      <p>Open your league on draft.premierleague.com. The league ID is the number in the page address (URL).</p>
+      <summary>Where do I find my Team ID?</summary>
+      <p>Open draft.premierleague.com and click Points. Your Team ID is the number after /entry/ in the page address. A league ID works too.</p>
     </details>
   </div>
 </div>
@@ -236,7 +237,7 @@ footer { padding: 32px 0 48px; color: var(--muted); font-size: 0.9rem; border-to
       <div class="tool-head">
         <div>
           <h2>Redraft board</h2>
-          <p class="status" style="max-width:62ch">Starting a new draft? This ranks every player by value: projected points over the next <span id="vbdHorizon">6</span> matches, minus what a freely available player at the same position would score. Updated every gameweek.</p>
+          <p class="status" style="max-width:62ch">Starting a new draft? This ranks every player by value: projected points for the rest of the season, minus what a freely available player at the same position would score. The fixture schedule is left out, since you keep players all season. Updated every gameweek.</p>
         </div>
         <div class="controls">
           <label>Teams in league
@@ -249,10 +250,11 @@ footer { padding: 32px 0 48px; color: var(--muted); font-size: 0.9rem; border-to
       </div>
       <div class="table-box">
         <table>
-          <thead><tr><th>Pick</th><th>Player</th><th>Position rank</th><th>Projected points</th><th>Value</th></tr></thead>
+          <thead><tr><th>Pick</th><th>Player</th><th>Position rank</th><th>Season points</th><th>Value</th></tr></thead>
           <tbody id="vbdRows"></tbody>
         </table>
       </div>
+      <p class="legend" style="font-size:1rem;color:var(--ink)"><b>Drafting right now?</b> Use the <a href="draft.html">live draft assistant</a>: mark each pick as it happens and it tells you the best pick for your turn, based on how fast each position runs dry.</p>
       <p class="legend">Value shows how many more points a player should score than the best player still left at his position once every team has filled its starting spots. Big value means drafting him early matters. Players with similar value form a tier, marked with a line.</p>
       <div style="text-align:center;margin-top:18px"><button class="btn" id="vbdMore">Show more players</button></div>
     </div>
@@ -447,7 +449,7 @@ async function loadData(league) {
     const l = await leagueP;
     if (l.ok && l.json && l.json.taken) {
       const taken = new Set(l.json.taken);
-      data.league = league; data.leagueSize = l.json.leagueSize;
+      data.league = l.json.name || l.json.league; data.leagueSize = l.json.leagueSize;
       data.players.forEach((x) => (x.available = !taken.has(x.id)));
     } else {
       DATA = data; attachOdds(DATA, (await oddsP).json); render();
@@ -542,6 +544,43 @@ function scorePlayers(data) {
 }
 
 /* ---------- Projected points and value based drafting ---------- */
+// Season-long projection for redraft: ignores the fixture schedule.
+// Tested on the 2024/25 and 2025/26 seasons. Early in the season each player's rates start
+// from last season (or a position average for new players) and this season's numbers take
+// over as matches are played. Minutes mix the whole season with the last 4 gameweeks.
+let POS_AVG = null;
+function computePosAvg(players) {
+  const out = {};
+  ["GK", "DEF", "MID", "FWD"].forEach((pos) => {
+    const g = players.filter((p) => p.pos === pos && p.minutes >= 270);
+    const n90 = Math.max(1, g.reduce((s, p) => s + p.minutes / 90, 0));
+    const sum = (f) => g.reduce((s, p) => s + (f(p) || 0), 0);
+    out[pos] = { xg: sum((p) => p.xg) / n90, xa: sum((p) => p.xa) / n90, sv: sum((p) => p.saves) / n90, bon: sum((p) => p.bonus) / n90, xgc: 1.35 };
+  });
+  return out;
+}
+function projectSeason(p, gws) {
+  const goalPts = { GK: 6, DEF: 6, MID: 5, FWD: 4 }[p.pos];
+  const csPts = { GK: 4, DEF: 4, MID: 1, FWD: 0 }[p.pos];
+  const n90 = p.minutes / 90;
+  const pr = p.prior && p.prior.pos === p.pos && p.prior.min >= 450 ? p.prior : null;
+  const base = pr || (POS_AVG && POS_AVG[p.pos]) || { xg: 0.1, xa: 0.08, sv: 0, bon: 0.15, xgc: 1.35 };
+  const k = pr ? 5 : 2.5; // how many matches the starting point is worth
+  const rate = (total, key) => ((total || 0) + base[key] * k) / (n90 + k);
+  const xg90 = rate(p.xg, "xg"), xa90 = rate(p.xa, "xa"), sv90 = rate(p.saves, "sv");
+  const xgc90 = rate(p.xgc, "xgc"), bon90 = rate(p.bonus, "bon");
+  let share = Math.min(1, p.minutes / (90 * Math.max(1, gws)));
+  if (p.recentShare != null) share = 0.5 * share + 0.5 * p.recentShare;
+  if (pr) share = (share * gws + pr.share * 2) / (gws + 2);
+  const att = goalPts * xg90 + 3 * xa90;
+  const conceded = p.pos === "GK" || p.pos === "DEF" ? 0.5 * xgc90 : 0;
+  const perMatch = share * (2 + att + csPts * Math.exp(-xgc90) + sv90 / 3 + bon90 + defconPts(p) - conceded);
+  const left = Math.max(1, 38 - gws);
+  const out = ["i", "s", "u", "n"].includes(p.status);
+  const missing = p.chance == null ? (out ? 2 : 0) : (100 - p.chance) / 100;
+  return Math.max(0, perMatch) * Math.max(0, left - missing);
+}
+
 // Rough FPL points per match: appearance + goals/assists + clean sheet + saves,
 // adjusted for each fixture with odds (or FPL difficulty when no odds).
 function projectPlayer(p, gws, horizon) {
@@ -568,8 +607,9 @@ function valueBoard(data, teams) {
   const horizon = CONFIG.vbd_horizon || 6;
   const starters = CONFIG.vbd_starters || DEFAULT_CONFIG.vbd_starters;
   const adj = new Map((CONFIG.player_adjustments || []).map((a) => [norm(a.name) + "|" + norm(a.team), a]));
+  POS_AVG = computePosAvg(data.players);
   const rows = data.players.map((p) => {
-    let proj = projectPlayer(p, gws, horizon);
+    let proj = projectSeason(p, gws);
     const a = adj.get(norm(p.name) + "|" + norm(p.team));
     if (a) proj *= 1 + (Number(a.boost) || 0) / 100; // boost 10 = +10 %
     return { ...p, proj, comment: a ? a.comment : "" };
@@ -587,7 +627,6 @@ function renderVBD() {
   if (!DATA) return;
   const teams = Number($("vbdTeams").value) || 10;
   const pos = $("vbdPos").value;
-  $("vbdHorizon").textContent = CONFIG.vbd_horizon || 6;
   let board = valueBoard(DATA, teams);
   board.forEach((p, i) => (p.pick = i + 1));
   if (pos !== "ALL") board = board.filter((p) => p.pos === pos);
@@ -636,8 +675,8 @@ function render() {
   ths[5].textContent = currentPos === "GK" ? "Per 90" : "xA";
   const gw = DATA.nextGameweek ? ` for gameweek ${DATA.nextGameweek}` : "";
   $("statusLine").textContent = inLeague
-    ? `Players nobody owns in league ${DATA.league}, ranked${gw}.`
-    : `Every player in the game, ranked${gw}. Enter your league ID to see only free agents.`;
+    ? `Players nobody owns in ${/^\d+$/.test(DATA.league) ? "league " + DATA.league : DATA.league}, ranked${gw}.`
+    : `Every player in the game, ranked${gw}. Enter your Team ID to see only free agents.`;
   if (currentPos === "ALL") $("statusLine").textContent += " With all positions shown, players are ranked by expected points over the next few matches.";
 
   if (DATA.leagueSize && DATA.leagueSize >= 4 && DATA.leagueSize <= 16) $("vbdTeams").value = DATA.leagueSize;
@@ -718,7 +757,7 @@ document.querySelectorAll(".tabs button").forEach((b) =>
 
 $("searchForm").addEventListener("submit", () => {
   const v = $("leagueInput").value.trim();
-  if (!/^\d{1,9}$/.test(v)) { showMessage("A league ID is a number, like 12345.", "error"); return; }
+  if (!/^\d{1,9}$/.test(v)) { showMessage("Your Team ID is a number, like 123456.", "error"); return; }
   try { localStorage.setItem("leagueId", v); } catch (e) {}
   loadData(v).then(() => $("tool").scrollIntoView({ behavior: "smooth" }));
 });
